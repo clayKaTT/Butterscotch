@@ -1507,6 +1507,28 @@ static RValue builtin_min(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t arg
     return RValue_makeReal(result);
 }
 
+static int compareReals(const void* a, const void* b) {
+    GMLReal lhs = *(const GMLReal*) a;
+    GMLReal rhs = *(const GMLReal*) b;
+    if (lhs > rhs) return 1;
+    if (rhs > lhs) return -1;
+    return 0;
+}
+
+static RValue builtin_median(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
+    if (1 > argCount) return RValue_makeReal(0.0);
+    // GMS docs cap median at 16 args; 32-element stack buffer gives 2x margin, with malloc fallback for safety.
+    GMLReal stackBuf[32];
+    GMLReal* buf = stackBuf;
+    if (argCount > 32) buf = (GMLReal*) malloc(sizeof(GMLReal) * argCount);
+    repeat(argCount, i) buf[i] = RValue_toReal(args[i]);
+    qsort(buf, argCount, sizeof(GMLReal), compareReals);
+    // Match HTML5: when argCount is even, return the upper of the two middle values (arr[argCount/2], not arr[argCount/2 - 1]).
+    GMLReal result = buf[argCount / 2];
+    if (stackBuf != buf) free(buf);
+    return RValue_makeReal(result);
+}
+
 static RValue builtin_power(MAYBE_UNUSED VMContext* ctx, RValue* args, int32_t argCount) {
     if (2 > argCount) return RValue_makeReal(0.0);
     return RValue_makeReal(GMLReal_pow(RValue_toReal(args[0]), RValue_toReal(args[1])));
@@ -10957,6 +10979,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "sign", builtin_sign);
     VM_registerBuiltin(ctx, "max", builtin_max);
     VM_registerBuiltin(ctx, "min", builtin_min);
+    VM_registerBuiltin(ctx, "median", builtin_median);
     VM_registerBuiltin(ctx, "power", builtin_power);
     VM_registerBuiltin(ctx, "sqrt", builtin_sqrt);
     VM_registerBuiltin(ctx, "log2", builtin_log2);
