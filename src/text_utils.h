@@ -300,21 +300,16 @@ static inline PreprocessedText TextUtils_wrapText(Font* font, const char* text, 
             // Loop through string and get the number of chars that will fit in the line.
             while (len > end && (float) linewidth > total) {
                 if (pNew[end] == '\n') break; // if we hit a newline, then "break" here...
-                uint16_t cp = TextUtils_decodeUtf8(pNew, len, &end); // advance `end` by one codepoint
+                int tentative = end;
+                uint16_t cp = TextUtils_decodeUtf8(pNew, len, &tentative); // advance `end` by one codepoint
                 FontGlyph* glyph = TextUtils_findGlyph(font, cp);
-                total += (glyph != nullptr) ? (float) glyph->shift : 0.0f; // add on width of character
-            }
-
-            // If we shot past the end, then move back a bit until we fit.
-            if (total > (float) linewidth) {
-                // Step back to the start of the previous codepoint, then peel off its shift.
-                int32_t prev = end - 1;
-                while (prev > start && ((uint8_t) pNew[prev] & 0xC0) == 0x80) prev--;
-                int32_t scan = prev;
-                uint16_t cp = TextUtils_decodeUtf8(pNew, len, &scan);
-                FontGlyph* glyph = TextUtils_findGlyph(font, cp);
-                total -= (glyph != nullptr) ? (float) glyph->shift : 0.0f; // add on width of character
-                end = prev;
+                float size = (glyph != nullptr) ? (float) glyph->shift : 0.0f; // width of character
+                float newTotal = total + size;
+                // Won't fit, bail out!
+                if (newTotal > (float) linewidth) break;
+                // It fits :3
+                total = newTotal;
+                end = tentative;
             }
 
             // END of line
@@ -345,7 +340,18 @@ static inline PreprocessedText TextUtils_wrapText(Font* font, const char* text, 
                         if (e != start) {
                             end = e;
                         } else {
-                            while (len > end && pNew[end] != ' ') end++;
+                            // This is where we diverge from the GameMaker-HTML5 behavior to match how the original runner works
+                            // The GameMaker-HTML5 runner does NOT wrap if it doesn't fit AND none of the characters are space, and we WANT that
+                            // Step back to the start of the previous codepoint, then peel off its shift
+                            while (total > (float) linewidth) {
+                                int32_t prev = end - 1;
+                                while (prev > start && ((uint8_t) pNew[prev] & 0xC0) == 0x80) prev--;
+                                int32_t scan = prev;
+                                uint16_t cp = TextUtils_decodeUtf8(pNew, len, &scan);
+                                FontGlyph* glyph = TextUtils_findGlyph(font, cp);
+                                total -= (glyph != nullptr) ? (float) glyph->shift : 0.0f; // add on width of character
+                                end = prev;
+                            }
                         }
                     }
                 }
