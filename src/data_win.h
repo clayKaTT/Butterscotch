@@ -158,7 +158,7 @@ typedef struct {
     Extension* extensions;
 } Extn;
 
-// The "present" field can be false for deleted/null pointer-table slots
+// The "present" field can be false for deleted/null pointer-table slots on asset structs below
 // This will MOST LIKELY ALWAYS be true on pre-2024.11+ games, but CAN be false in 2022.11+ games if the asset was deleted
 
 // ===[ SOND - Sounds ]===
