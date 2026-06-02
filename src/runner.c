@@ -1472,6 +1472,18 @@ static void cleanupState(Runner* runner) {
     arrfree(runner->mpGridPool);
     runner->mpGridPool = nullptr;
 
+    // Free pending async buffer save/load state
+    repeat((int32_t) arrlen(runner->asyncBufferGroupOps), i) {
+        free(runner->asyncBufferGroupOps[i].filename);
+    }
+    arrfree(runner->asyncBufferGroupOps);
+    runner->asyncBufferGroupOps = nullptr;
+    arrfree(runner->asyncSaveLoadQueue);
+    runner->asyncSaveLoadQueue = nullptr;
+    free(runner->asyncBufferGroupName);
+    runner->asyncBufferGroupName = nullptr;
+    runner->asyncBufferGroupActive = false;
+
     // Free INI state
     if (runner->currentIni != nullptr) {
         Ini_free(runner->currentIni);
@@ -1532,6 +1544,7 @@ void Runner_reset(Runner* runner) {
 
     runner->pendingRoom = -1;
     runner->asyncLoadMapId = -1;
+    runner->asyncBufferNextRequestId = 1;
     runner->xboxAccountPickerPendingId = -1;
     runner->xboxAccountPickerPadIndex = 0;
     runner->xboxAsyncIdCounter = 1;
@@ -2982,6 +2995,41 @@ void Runner_step(Runner* runner) {
             *mapPtr = nullptr;
         }
         runner->asyncLoadMapId = -1;
+    }
+
+    // Fire pending async buffer save/load completions.
+    // Copy the queue first so that new async loads aren't done in the list we are currently iterating.
+    if (runner->asyncSaveLoadQueue != nullptr) {
+        AsyncSaveLoadCompletion* pending = runner->asyncSaveLoadQueue;
+        runner->asyncSaveLoadQueue = nullptr;
+        repeat((int32_t) arrlen(pending), idx) {
+            AsyncSaveLoadCompletion completion = pending[idx];
+
+            DsMapEntry* map = nullptr;
+            arrput(runner->dsMapPool, map);
+            int32_t mapId = arrlen(runner->dsMapPool) - 1;
+
+            DsMapEntry** mapPtr = &runner->dsMapPool[mapId];
+            shput(*mapPtr, safeStrdup("id"), RValue_makeReal((GMLReal) completion.requestId));
+            shput(*mapPtr, safeStrdup("status"), RValue_makeReal((GMLReal) completion.status));
+            shput(*mapPtr, safeStrdup("error"), RValue_makeReal((GMLReal) completion.error));
+
+            runner->asyncLoadMapId = mapId;
+            Runner_executeEventForAll(runner, EVENT_OTHER, OTHER_ASYNC_SAVE_LOAD);
+
+            // Clean up ds_map
+            mapPtr = &runner->dsMapPool[mapId];
+            if (*mapPtr != nullptr) {
+                repeat(shlen(*mapPtr), j) {
+                    free((*mapPtr)[j].key);
+                    RValue_free(&(*mapPtr)[j].value);
+                }
+                shfree(*mapPtr);
+                *mapPtr = nullptr;
+            }
+            runner->asyncLoadMapId = -1;
+        }
+        arrfree(pending);
     }
 
     // Dispatch collision events

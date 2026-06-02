@@ -53,6 +53,7 @@
 #define OTHER_NO_MORE_HEALTH 9
 #define OTHER_USER0          10
 #define OTHER_ASYNC_DIALOG   63
+#define OTHER_ASYNC_SAVE_LOAD 72
 #define OTHER_ASYNC_SYSTEM   75
 
 #define MAX_VIEWS 8
@@ -268,6 +269,24 @@ typedef struct {
     bool isValid;        // false after buffer_delete (tombstone)
 } GmlBuffer;
 
+// ===[ Async buffer save/load ]===
+
+// A single queued buffer load/save operation, accumulated inside an async group.
+typedef struct {
+    int32_t bufferId;  // buffer to read from (save) or write into (load)
+    char* filename;    // owned; raw file name (the group name is applied as a directory prefix when the op is kicked)
+    int32_t offset;    // byte offset within the buffer
+    int32_t size;      // byte count; -1 means "the whole file" for loads
+    bool isSave;       // true = save, false = load
+} AsyncBufferOp;
+
+// A completed buffer save/load request waiting to fire its "Async - Save/Load" event.
+typedef struct {
+    int32_t requestId; // posted to the async_load map as "id"; also returned by buffer_async_group_end
+    int32_t status;    // posted as "status": 1 on success, 0 on failure (matches the native runner)
+    int32_t error;     // posted as "error"; always 0 here (matches the native runner)
+} AsyncSaveLoadCompletion;
+
 // Motion planning grid used by mp_grid_* builtins. Cell value 1 = blocked.
 typedef struct {
     bool inUse;
@@ -458,6 +477,13 @@ struct Runner {
 
     // Async map ID
     int32_t asyncLoadMapId;
+
+    // Async buffer save/load state
+    char* asyncBufferGroupName;                   // current group name (nullptr when no group is open); applied as a directory prefix
+    bool asyncBufferGroupActive;                  // true between buffer_async_group_begin and buffer_async_group_end
+    AsyncBufferOp* asyncBufferGroupOps;           // stb_ds array of ops accumulated in the open group
+    AsyncSaveLoadCompletion* asyncSaveLoadQueue;  // stb_ds array of completions waiting to fire their event
+    int32_t asyncBufferNextRequestId;             // monotonic request id handed out per kicked group/op
 
     // Pending Xbox One account-picker async result.
     int32_t xboxAccountPickerPendingId; // -1 when nothing is pending

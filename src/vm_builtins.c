@@ -7249,6 +7249,138 @@ static RValue builtin_buffer_save_ext(MAYBE_UNUSED VMContext* ctx, RValue* args,
     return RValue_makeUndefined();
 }
 
+// ===[ Async buffer save/load ]===
+
+// Resolves the on-disk path for an async buffer op: "<group>/<filename>" when a non-empty group name is set, otherwise just "<filename>". Caller owns the returned string.
+static char* gmlAsyncBufferResolvePath(const char* groupName, const char* filename) {
+    if (groupName == nullptr || groupName[0] == '\0') return safeStrdup(filename);
+    size_t length = strlen(groupName) + 1 + strlen(filename) + 1;
+    char* path = safeMalloc(length);
+    snprintf(path, length, "%s/%s", groupName, filename);
+    return path;
+}
+
+// Performs a single async buffer op against the file system. Returns true on success.
+static bool gmlAsyncBufferRunOp(Runner* runner, const AsyncBufferOp* op, const char* groupName) {
+    FileSystem* fs = runner->fileSystem;
+    GmlBuffer* buf = gmlBufferGet(runner, op->bufferId);
+    if (buf == nullptr) return false;
+
+    char* path = gmlAsyncBufferResolvePath(groupName, op->filename);
+    bool ok = false;
+
+    if (op->isSave) {
+        int32_t maxBoundary = (buf->type == GML_BUFFER_GROW) ? buf->usedSize : buf->size;
+        int32_t offset = op->offset < 0 ? 0 : op->offset;
+        int32_t size = op->size;
+        if (size < 0) size = maxBoundary - offset;
+        if (offset > maxBoundary) size = 0;
+        else if (offset + size > maxBoundary) size = maxBoundary - offset;
+        if (size < 0) size = 0;
+        ok = fs->vtable->writeFileBinary(fs, path, buf->data + offset, size);
+    } else {
+        uint8_t* fileData = nullptr;
+        int32_t fileSize = 0;
+        if (fs->vtable->readFileBinary(fs, path, &fileData, &fileSize)) {
+            int32_t offset = op->offset < 0 ? 0 : op->offset;
+            int32_t copySize = (op->size < 0 || op->size > fileSize) ? fileSize : op->size;
+            // CopyMemoryToBuffer preserves the read/write cursor, so save and restore it around the copy.
+            int32_t savedPosition = buf->position;
+            gmlBufferEnsureSize(buf, offset + copySize);
+            if (copySize > 0 && buf->size >= offset + copySize) {
+                memcpy(buf->data + offset, fileData, (size_t) copySize);
+            }
+            if (buf->type == GML_BUFFER_GROW && offset + copySize > buf->usedSize) {
+                buf->usedSize = offset + copySize;
+            }
+            buf->position = savedPosition;
+            free(fileData);
+            ok = true;
+        }
+    }
+
+    free(path);
+    return ok;
+}
+
+// Runs a batch of async buffer ops immediately, then queues a single completion that fires the "Async - Save/Load" event on a later frame. Returns the request id (also the async_load "id").
+static int32_t gmlAsyncBufferKick(Runner* runner, AsyncBufferOp* ops, int32_t opCount, const char* groupName) {
+    int32_t requestId = runner->asyncBufferNextRequestId++;
+    bool allOk = true;
+    repeat(opCount, i) {
+        if (!gmlAsyncBufferRunOp(runner, &ops[i], groupName)) allOk = false;
+    }
+    AsyncSaveLoadCompletion completion = { .requestId = requestId, .status = allOk ? 1 : 0, .error = 0 };
+    arrput(runner->asyncSaveLoadQueue, completion);
+    return requestId;
+}
+
+// Shared by buffer_load_async and buffer_save_async: builds the op and either accumulates it into the open group (returning -1) or kicks it immediately (returning the request id).
+static RValue gmlBufferAsyncEnqueue(Runner* runner, RValue* args, bool isSave) {
+    AsyncBufferOp op = {0};
+    op.bufferId = RValue_toInt32(args[0]);
+    op.filename = RValue_toString(args[1]); // owned
+    op.offset = RValue_toInt32(args[2]);
+    op.size = RValue_toInt32(args[3]);
+    op.isSave = isSave;
+
+    if (runner->asyncBufferGroupActive) {
+        arrput(runner->asyncBufferGroupOps, op); // buffer_async_group_end frees op.filename
+        return RValue_makeReal(-1.0); // native returns -1 while a group is open
+    }
+
+    // No open group: kick this single op right away.
+    int32_t requestId = gmlAsyncBufferKick(runner, &op, 1, nullptr);
+    free(op.filename);
+    return RValue_makeReal((GMLReal) requestId);
+}
+
+static RValue builtin_buffer_load_async(MAYBE_UNUSED VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    return gmlBufferAsyncEnqueue(ctx->runner, args, false);
+}
+
+static RValue builtin_buffer_save_async(MAYBE_UNUSED VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    return gmlBufferAsyncEnqueue(ctx->runner, args, true);
+}
+
+static RValue builtin_buffer_async_group_begin(MAYBE_UNUSED VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    if (runner->asyncBufferGroupActive) {
+        fprintf(stderr, "buffer_async_group_begin: a buffer group is already open\n");
+        return RValue_makeUndefined();
+    }
+    free(runner->asyncBufferGroupName);
+    runner->asyncBufferGroupName = (argCount > 0) ? RValue_toString(args[0]) : safeStrdup("");
+    runner->asyncBufferGroupActive = true;
+    return RValue_makeUndefined();
+}
+
+static RValue builtin_buffer_async_group_end(MAYBE_UNUSED VMContext* ctx, MAYBE_UNUSED RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    if (!runner->asyncBufferGroupActive) {
+        fprintf(stderr, "buffer_async_group_end: no matching buffer_async_group_begin\n");
+        return RValue_makeReal(-1.0);
+    }
+
+    int32_t opCount = (int32_t) arrlen(runner->asyncBufferGroupOps);
+    int32_t requestId = -1;
+    if (opCount > 0) {
+        requestId = gmlAsyncBufferKick(runner, runner->asyncBufferGroupOps, opCount, runner->asyncBufferGroupName);
+    }
+
+    repeat(opCount, i) {
+        free(runner->asyncBufferGroupOps[i].filename);
+    }
+    arrfree(runner->asyncBufferGroupOps);
+    runner->asyncBufferGroupOps = nullptr;
+
+    free(runner->asyncBufferGroupName);
+    runner->asyncBufferGroupName = nullptr;
+    runner->asyncBufferGroupActive = false;
+
+    return RValue_makeReal((GMLReal) requestId);
+}
+
 static RValue builtin_buffer_base64_encode(MAYBE_UNUSED VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     Runner* runner = ctx->runner;
     if (3 > argCount) return RValue_makeOwnedString(safeStrdup(""));
@@ -12736,6 +12868,10 @@ void VMBuiltins_registerAll(VMContext* ctx) {
     VM_registerBuiltin(ctx, "buffer_load", builtin_buffer_load);
     VM_registerBuiltin(ctx, "buffer_save", builtin_buffer_save);
     VM_registerBuiltin(ctx, "buffer_save_ext", builtin_buffer_save_ext);
+    VM_registerBuiltin(ctx, "buffer_load_async", builtin_buffer_load_async);
+    VM_registerBuiltin(ctx, "buffer_save_async", builtin_buffer_save_async);
+    VM_registerBuiltin(ctx, "buffer_async_group_begin", builtin_buffer_async_group_begin);
+    VM_registerBuiltin(ctx, "buffer_async_group_end", builtin_buffer_async_group_end);
     VM_registerBuiltin(ctx, "buffer_base64_encode", builtin_buffer_base64_encode);
     VM_registerBuiltin(ctx, "buffer_base64_decode", builtin_buffer_base64_decode);
     VM_registerBuiltin(ctx, "base64_encode", builtin_base64_encode);
