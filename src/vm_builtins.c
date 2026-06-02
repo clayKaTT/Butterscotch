@@ -12192,18 +12192,18 @@ static RValue builtin_json_decode(VMContext* ctx, RValue* args, int32_t argCount
     DsMapEntry **mapPtr = dsMapGet(runner, mapIndex);
     const char* content = args[0].string;
     JsonValue* json = JsonReader_parse(content);
-    // "An invalid DS Map handle (-1) is returned in case the JSON could not be decoded."
+    // While the docs say "An invalid DS Map handle (-1) is returned in case the JSON could not be decoded.", when looking at the GameMaker-HTML5 source code it actually wraps in a "default" block when it fails to be parsed
     if (json == nullptr) {
-        return RValue_makeReal(-1);
-    }
+        shput(*mapPtr, "default", RValue_makeIndependent(args[0]));
+    } else {
+        repeat(JsonReader_objectLength(json), i) {
+            const char *key = safeStrdup(JsonReader_getObjectKey(json, i));
+            RValue val = RValue_makeOwnedString(safeStrdup(JsonReader_getString(JsonReader_getObjectValue(json, i))));
+            shput(*mapPtr, key, val);
+        }
 
-    repeat(JsonReader_objectLength(json), i) {
-        const char *key = safeStrdup(JsonReader_getObjectKey(json, i));
-        RValue val = RValue_makeOwnedString(safeStrdup(JsonReader_getString(JsonReader_getObjectValue(json, i))));
-        shput(*mapPtr, key, val);
+        JsonReader_free(json);
     }
-
-    JsonReader_free(json);
 
     return RValue_makeReal(mapIndex);
 }
