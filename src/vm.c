@@ -4506,7 +4506,7 @@ void VM_disassemble(VMContext* ctx, int32_t codeIndex) {
 }
 
 void VM_registerBuiltin(VMContext* ctx, const char* name, BuiltinFunc func) {
-    requireMessage(shgeti(ctx->builtinMap, name) == -1, "Trying to register an already registered builtin function!");
+    requireMessageFormatted(__FILE__, __LINE__, shgeti(ctx->builtinMap, name) == -1, "Trying to register an already registered builtin function! Function Name: %s", name);
     shput(ctx->builtinMap, (char*) name, func);
 }
 
