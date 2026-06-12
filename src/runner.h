@@ -212,6 +212,7 @@ typedef struct {
 // Values match GML layerelementtype_* enum so layer_get_element_type can return them as-is.
 typedef enum {
     RuntimeLayerElementType_Background = 1,
+    RuntimeLayerElementType_Instance = 2,
     RuntimeLayerElementType_Sprite = 4,
     RuntimeLayerElementType_Tile = 7,
 } RuntimeLayerElementType;
@@ -225,6 +226,7 @@ typedef struct {
     RuntimeBackgroundElement* backgroundElement; // owned; nullptr if type != Background
     RuntimeSpriteElement* spriteElement; // owned; nullptr if type != Sprite
     RoomTile* tileElement; // borrowed, points into RoomLayerAssetsData->legacyTiles; nullptr if type != Tile
+    int32_t instanceId; // only valid if type == Instance; the instance may have died since, so callers must check liveness
 } RuntimeLayerElement;
 
 // Runtime-mutable state for a GMS2 room layer. Parsed layers are populated at room load from RoomLayer and share IDs with the parsed data.
@@ -238,8 +240,8 @@ typedef struct {
     float hSpeed;
     float vSpeed;
     bool dynamic; // true = created at runtime via layer_create
-    char* dynamicName; // owned; only populated for dynamic layers
-    RuntimeLayerElement* elements; // stb_ds array; only populated for dynamic layers
+    char* dynamicName; // owned
+    RuntimeLayerElement* elements; // stb_ds array
 } RuntimeLayer;
 
 // stb_ds hashmap entry: depth -> tile layer state
@@ -667,8 +669,10 @@ void Runner_dumpState(Runner* runner);
 char* Runner_dumpStateJson(Runner* runner);
 void Runner_free(Runner* runner);
 RuntimeLayer* Runner_findRuntimeLayerById(Runner* runner, int32_t id);
-RoomLayer* Runner_findRoomLayerById(Runner* runner, int32_t id);
+RoomLayer* Runner_findRoomLayerById(Room* room, int32_t id);
 RuntimeLayerElement* Runner_findLayerElementById(Runner* runner, int32_t elementId, RuntimeLayer** outLayer);
+void Runner_addInstanceLayerElement(Runner* runner, int32_t layerId, int32_t instanceId);
+void Runner_removeInstanceLayerElement(Runner* runner, int32_t instanceId);
 uint32_t Runner_getNextLayerId(Runner* runner);
 void Runner_freeRuntimeLayer(RuntimeLayer* runtimeLayer);
 // Sets the active state of the instance

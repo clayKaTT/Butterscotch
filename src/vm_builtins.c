@@ -1197,6 +1197,10 @@ void VMBuiltins_setVariable(VMContext* ctx, Instance* inst, int16_t builtinVarId
             int32_t layerId = resolveLayerIdArg(runner, val);
             RuntimeLayer* rl = Runner_findRuntimeLayerById(runner, layerId);
             if (rl != nullptr) {
+                if (inst->layer != layerId) {
+                    Runner_removeInstanceLayerElement(runner, inst->instanceId);
+                    Runner_addInstanceLayerElement(runner, layerId, inst->instanceId);
+                }
                 inst->layer = layerId;
                 if (inst->depth != rl->depth) {
                     inst->depth = rl->depth;
@@ -11330,7 +11334,7 @@ static int32_t resolveLayerIdArg(Runner* runner, RValue arg) {
         size_t runtimeLayerCount = arrlenu(runner->runtimeLayers);
         repeat(runtimeLayerCount, i) {
             RuntimeLayer* rl = &runner->runtimeLayers[i];
-            if (rl->dynamic && rl->dynamicName != nullptr && strcmp(rl->dynamicName, name) == 0)
+            if (rl->dynamic && strcmp(rl->dynamicName, name) == 0)
                 return (int32_t) rl->id;
         }
         if (runner->currentRoom != nullptr) {
@@ -11393,7 +11397,7 @@ static RValue builtin_layer_get_id(VMContext* ctx, RValue* args, MAYBE_UNUSED in
     size_t runtimeLayerCount = arrlenu(runner->runtimeLayers);
     repeat(runtimeLayerCount, i) {
         RuntimeLayer* runtimeLayer = &runner->runtimeLayers[i];
-        if (runtimeLayer->dynamic && runtimeLayer->dynamicName != nullptr && strcmp(runtimeLayer->dynamicName, name) == 0) {
+        if (runtimeLayer->dynamic && strcmp(runtimeLayer->dynamicName, name) == 0) {
             result = (int32_t) runtimeLayer->id;
             break;
         }
@@ -11422,10 +11426,10 @@ static RValue builtin_layer_get_name(VMContext* ctx, RValue* args, MAYBE_UNUSED 
     int32_t id = resolveLayerIdArg(runner, args[0]);
 
     RuntimeLayer* runtimeLayer = Runner_findRuntimeLayerById(runner, id);
-    if (runtimeLayer != nullptr && runtimeLayer->dynamic && runtimeLayer->dynamicName != nullptr)
+    if (runtimeLayer != nullptr && runtimeLayer->dynamic)
         return RValue_makeString(runtimeLayer->dynamicName);
 
-    RoomLayer* roomLayer = Runner_findRoomLayerById(runner, id);
+    RoomLayer* roomLayer = Runner_findRoomLayerById(runner->currentRoom, id);
     if (roomLayer == nullptr || roomLayer->name == nullptr)
         return RValue_makeString("");
 
@@ -11565,16 +11569,21 @@ static RValue builtin_layer_create(VMContext* ctx, RValue* args, int32_t argCoun
     Runner* runner = ctx->runner;
     int32_t depth = RValue_toInt32(args[0]);
     char* name = nullptr;
+    uint32_t id = Runner_getNextLayerId(runner);
     if (argCount > 1) {
         name = RValue_toString(args[1]);
+    } else {
+        // Technically could be smaller, but let's be safe
+        char* generatedName = safeMalloc(16);
+        snprintf(generatedName, 16, "_layer_%x", id);
+        name = generatedName;
     }
-    uint32_t id = Runner_getNextLayerId(runner);
     RuntimeLayer runtimeLayer = {0};
     runtimeLayer.id = id;
     runtimeLayer.depth = depth;
     runtimeLayer.visible = true;
     runtimeLayer.dynamic = true;
-    runtimeLayer.dynamicName = name, // ownership transferred (nullptr if not provided)
+    runtimeLayer.dynamicName = name, // ownership transferred
     arrput(runner->runtimeLayers, runtimeLayer);
     runner->drawableListStructureDirty = true;
     return RValue_makeReal((GMLReal) id);
@@ -11733,7 +11742,7 @@ static RValue builtin_layer_background_sprite(VMContext* ctx, RValue* args, MAYB
         return RValue_makeUndefined();
     }
 
-    RoomLayer* roomLayer = Runner_findRoomLayerById(runner, elementId);
+    RoomLayer* roomLayer = Runner_findRoomLayerById(runner->currentRoom, elementId);
     if (roomLayer != nullptr && roomLayer->type == RoomLayerType_Background && roomLayer->backgroundData != nullptr) {
         roomLayer->backgroundData->spriteIndex = spriteIndex;
     }
@@ -11755,7 +11764,7 @@ static RValue builtin_layer_background_get_id(VMContext* ctx, RValue* args, MAYB
         }
     }
 
-    RoomLayer* roomLayer = Runner_findRoomLayerById(runner, layerId);
+    RoomLayer* roomLayer = Runner_findRoomLayerById(runner->currentRoom, layerId);
     if (roomLayer != nullptr && roomLayer->type == RoomLayerType_Background) {
         return RValue_makeReal((GMLReal) layerId);
     }
@@ -11773,7 +11782,7 @@ static RValue builtin_layer_background_index(VMContext* ctx, RValue* args, MAYBE
         bg->imageIndex = index;
     }
 
-    RoomLayer* roomLayer = Runner_findRoomLayerById(runner, background_element_id);
+    RoomLayer* roomLayer = Runner_findRoomLayerById(runner->currentRoom, background_element_id);
     if (roomLayer != nullptr && roomLayer->type == RoomLayerType_Background && roomLayer->backgroundData != nullptr) {
         roomLayer->backgroundData->imageIndex = index;
     }
@@ -11803,9 +11812,23 @@ static RValue builtin_layer_get_all_elements(VMContext* ctx, RValue* args, MAYBE
     int32_t i = 0;
     size_t count = arrlenu(runtimeLayer->elements);
     repeat(count, elementIndex) {
-        VM_arraySet(ctx, &arr, i++, RValue_makeReal((GMLReal) runtimeLayer->elements[elementIndex].id));
+        RuntimeLayerElement* el = &runtimeLayer->elements[elementIndex];
+        if (el->type == RuntimeLayerElementType_Instance) {
+            // Instances destroyed mid-frame are reaped lazily; don't report their elements.
+            Instance* elInst = hmget(runner->instancesById, el->instanceId);
+            if (elInst == nullptr || elInst->destroyed) continue;
+        }
+        VM_arraySet(ctx, &arr, i++, RValue_makeReal((GMLReal) el->id));
     }
     return arr;
+}
+
+static RValue builtin_layer_instance_get_instance(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    RuntimeLayerElement* el = Runner_findLayerElementById(runner, RValue_toInt32(args[0]), nullptr);
+    if (el == nullptr || el->type != RuntimeLayerElementType_Instance)
+        return RValue_makeReal((GMLReal) INSTANCE_NOONE);
+    return RValue_makeReal((GMLReal) el->instanceId);
 }
 #endif
 
@@ -11983,7 +12006,7 @@ static RValue builtin_layer_tilemap_get_id(VMContext* ctx, RValue* args, MAYBE_U
     int32_t layerId = resolveLayerIdArg(runner, args[0]);
     if (0 > layerId) return RValue_makeReal(-1.0);
 
-    RoomLayer* foundLayer = Runner_findRoomLayerById(runner, layerId);
+    RoomLayer* foundLayer = Runner_findRoomLayerById(runner->currentRoom, layerId);
     if (foundLayer != nullptr && foundLayer->type == RoomLayerType_Tiles) {
         return RValue_makeReal(layerId);
     }
@@ -11998,7 +12021,7 @@ static RValue builtin_draw_tilemap(VMContext* ctx, RValue* args, MAYBE_UNUSED in
     GMLReal x = RValue_toReal(args[1]);
     GMLReal y = RValue_toReal(args[2]);
 
-    RoomLayer* foundLayer = Runner_findRoomLayerById(runner, tilemap_layer_id);
+    RoomLayer* foundLayer = Runner_findRoomLayerById(runner->currentRoom, tilemap_layer_id);
     if (foundLayer != nullptr && foundLayer->type == RoomLayerType_Tiles) {
         Runner_drawTileLayer(runner, foundLayer->tilesData, x, y);
     }
@@ -12013,7 +12036,7 @@ static RValue builtin_tilemap_x(VMContext* ctx, RValue* args, MAYBE_UNUSED int32
     int32_t tilemapElementId = RValue_toInt32(args[0]);
     GMLReal x = RValue_toReal(args[1]);
 
-    RoomLayer* foundLayer = Runner_findRoomLayerById(runner, tilemapElementId);
+    RoomLayer* foundLayer = Runner_findRoomLayerById(runner->currentRoom, tilemapElementId);
     if (foundLayer == nullptr || foundLayer->type != RoomLayerType_Tiles) return RValue_makeUndefined();
 
     RuntimeLayer* runtimeLayer = Runner_findRuntimeLayerById(runner, tilemapElementId);
@@ -12027,7 +12050,7 @@ static RValue builtin_tilemap_y(VMContext* ctx, RValue* args, MAYBE_UNUSED int32
     int32_t tilemapElementId = RValue_toInt32(args[0]);
     GMLReal y = RValue_toReal(args[1]);
 
-    RoomLayer* foundLayer = Runner_findRoomLayerById(runner, tilemapElementId);
+    RoomLayer* foundLayer = Runner_findRoomLayerById(runner->currentRoom, tilemapElementId);
     if (foundLayer == nullptr || foundLayer->type != RoomLayerType_Tiles) return RValue_makeUndefined();
 
     RuntimeLayer* runtimeLayer = Runner_findRuntimeLayerById(runner, tilemapElementId);
@@ -12040,7 +12063,7 @@ static RValue builtin_tilemap_get_x(VMContext* ctx, RValue* args, MAYBE_UNUSED i
     Runner* runner = ctx->runner;
     int32_t tilemapElementId = RValue_toInt32(args[0]);
 
-    RoomLayer* foundLayer = Runner_findRoomLayerById(runner, tilemapElementId);
+    RoomLayer* foundLayer = Runner_findRoomLayerById(runner->currentRoom, tilemapElementId);
     if (foundLayer == nullptr || foundLayer->type != RoomLayerType_Tiles) return RValue_makeReal(-1.0);
 
     RuntimeLayer* runtimeLayer = Runner_findRuntimeLayerById(runner, tilemapElementId);
@@ -12053,7 +12076,7 @@ static RValue builtin_tilemap_get_y(VMContext* ctx, RValue* args, MAYBE_UNUSED i
     Runner* runner = ctx->runner;
     int32_t tilemapElementId = RValue_toInt32(args[0]);
 
-    RoomLayer* foundLayer = Runner_findRoomLayerById(runner, tilemapElementId);
+    RoomLayer* foundLayer = Runner_findRoomLayerById(runner->currentRoom, tilemapElementId);
     if (foundLayer == nullptr || foundLayer->type != RoomLayerType_Tiles) return RValue_makeReal(-1.0);
 
     RuntimeLayer* runtimeLayer = Runner_findRuntimeLayerById(runner, tilemapElementId);
@@ -12068,7 +12091,7 @@ static RValue builtin_tilemap_get_at_pixel(VMContext* ctx, RValue* args, MAYBE_U
     Runner* runner = ctx->runner;
     int32_t tilemapElementId = RValue_toInt32(args[0]);
 
-    RoomLayer* foundLayer = Runner_findRoomLayerById(runner, tilemapElementId);
+    RoomLayer* foundLayer = Runner_findRoomLayerById(runner->currentRoom, tilemapElementId);
     if (foundLayer == nullptr || foundLayer->type != RoomLayerType_Tiles) return RValue_makeReal(-1.0);
 
     RoomLayerTilesData* data = foundLayer->tilesData;
@@ -14688,6 +14711,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
 #if IS_WAD17_OR_HIGHER_ENABLED
     VM_registerBuiltin(ctx, "layer_get_all", builtin_layer_get_all);
     VM_registerBuiltin(ctx, "layer_get_all_elements", builtin_layer_get_all_elements);
+    VM_registerBuiltin(ctx, "layer_instance_get_instance", builtin_layer_instance_get_instance);
 #endif
     VM_registerBuiltin(ctx, "layer_get_element_type", builtin_layer_get_element_type);
     VM_registerBuiltin(ctx, "layer_sprite_get_sprite", builtin_layer_sprite_get_sprite);

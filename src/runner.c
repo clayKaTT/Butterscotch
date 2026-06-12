@@ -18,10 +18,8 @@
 
 // ===[ Runtime Layer Teardown Helpers ]===
 void Runner_freeRuntimeLayer(RuntimeLayer* runtimeLayer) {
-    if (runtimeLayer->dynamicName != nullptr) {
-        free(runtimeLayer->dynamicName);
-        runtimeLayer->dynamicName = nullptr;
-    }
+    free(runtimeLayer->dynamicName);
+    runtimeLayer->dynamicName = nullptr;
     size_t elementCount = arrlenu(runtimeLayer->elements);
     repeat(elementCount, i) {
         RuntimeLayerElement* el = &runtimeLayer->elements[i];
@@ -818,7 +816,7 @@ void Runner_draw(Runner* runner) {
             }
 
             // Parsed layer: look up the RoomLayer by ID and render its data-driven content.
-            RoomLayer* parsedLayer = Runner_findRoomLayerById(runner, (int32_t) runtimeLayer->id);
+            RoomLayer* parsedLayer = Runner_findRoomLayerById(runner->currentRoom, (int32_t) runtimeLayer->id);
             if (parsedLayer == nullptr) continue;
             if (parsedLayer->type == RoomLayerType_Assets) {
                 RoomLayerAssetsData* data = parsedLayer->assetsData;
@@ -1259,6 +1257,9 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
 
     SavedRoomState* savedState = &runner->savedRoomStates[roomIndex];
 
+    // Kept so carried persistent instances can be re-homed onto the new room's layer with the same name.
+    Room* previousRoom = runner->currentRoom;
+
     runner->currentRoom = room;
     runner->currentRoomIndex = roomIndex;
     runner->viewsEnabled = (room->flags & 1) != 0;
@@ -1422,6 +1423,54 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
 
     Instance** carriedPersistent = takePersistentInstances(runner);
 
+    // Re-home carried persistent instances onto the new room's layer with the same name as their old layer (native runner behavior).
+    // Layer IDs are unique per room, so the old ID never matches a new-room layer directly.
+    repeat(arrlen(carriedPersistent), ci) {
+        Instance* inst = carriedPersistent[ci];
+        if (0 > inst->layer || previousRoom == nullptr) continue;
+        RoomLayer* oldLayer = Runner_findRoomLayerById(previousRoom, inst->layer);
+        int32_t newLayerId = -1;
+        int32_t newLayerDepth = inst->depth;
+        if (oldLayer != nullptr) {
+            const char* oldLayerName = oldLayer->name;
+            // Search both the new room's parsed layers and any dynamic layers already created.
+            size_t runtimeCount = arrlenu(runner->runtimeLayers);
+            repeat(runtimeCount, li) {
+                RuntimeLayer* runtimeLayer = &runner->runtimeLayers[li];
+                const char* runtimeLayerName = runtimeLayer->dynamicName;
+
+                // Get the ORIGINAL name of the layer if available, not the one that may have been changed during runtime
+                RoomLayer* roomLayer = Runner_findRoomLayerById(room, (int32_t) runtimeLayer->id);
+                if (roomLayer != nullptr)
+                    runtimeLayerName = roomLayer->name;
+
+                if (strcmp(runtimeLayerName, oldLayerName) == 0) {
+                    newLayerId = (int32_t) runtimeLayer->id;
+                    newLayerDepth = runtimeLayer->depth;
+                    break;
+                }
+            }
+
+            if (0 > newLayerId) {
+                // No layer with that name in the new room: create one at the instance's depth.
+                RuntimeLayer runtimeLayer = {0};
+                runtimeLayer.id = Runner_getNextLayerId(runner);
+                runtimeLayer.depth = inst->depth;
+                runtimeLayer.visible = true;
+                runtimeLayer.dynamic = true;
+                runtimeLayer.dynamicName = safeStrdup(oldLayerName);
+                arrput(runner->runtimeLayers, runtimeLayer);
+                newLayerId = (int32_t) runtimeLayer.id;
+                newLayerDepth = runtimeLayer.depth;
+            }
+        }
+        inst->layer = newLayerId;
+        if (newLayerId >= 0) {
+            inst->depth = newLayerDepth;
+            Runner_addInstanceLayerElement(runner, newLayerId, inst->instanceId);
+        }
+    }
+
     // Two-pass instance creation (matches HTML5 runner behavior):
     // Pass 1: Create all instance objects so they exist for cross-references
     // Pass 2: Fire preCreateCode, CREATE events, and creationCode
@@ -1464,6 +1513,7 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
                 if (inst != nullptr) {
                     inst->depth = layer->depth;
                     inst->layer = (int32_t) layer->id;
+                    Runner_addInstanceLayerElement(runner, (int32_t) layer->id, inst->instanceId);
                 }
             }
         }
@@ -1485,9 +1535,14 @@ static void initRoom(Runner* runner, int32_t roomIndex) {
         if (inst->createEventFired) continue;
         inst->createEventFired = true;
 
+        // An earlier instance's Create event may have destroyed this one, skip it!
+        if (inst->destroyed) continue;
+
         Runner_executeEvent(runner, inst, EVENT_PRECREATE, 0);
         executeCode(runner, inst, roomObj->preCreateCode);
+        if (inst->destroyed) continue;
         Runner_executeEvent(runner, inst, EVENT_CREATE, 0);
+        if (inst->destroyed) continue;
         executeCode(runner, inst, roomObj->creationCode);
     }
 
@@ -2027,6 +2082,7 @@ Instance* Runner_createInstanceWithLayer(Runner* runner, GMLReal x, GMLReal y, i
     Instance* inst = createAndInitInstance(runner, runner->nextInstanceId++, objectIndex, x, y);
     inst->layer = layerId;
     inst->depth = rl->depth;
+    Runner_addInstanceLayerElement(runner, layerId, inst->instanceId);
     dispatchInstanceCreationEvents(runner, inst);
     return inst;
 }
@@ -2081,10 +2137,10 @@ RuntimeLayer* Runner_findRuntimeLayerById(Runner* runner, int32_t id) {
     return nullptr;
 }
 
-RoomLayer* Runner_findRoomLayerById(Runner* runner, int32_t id) {
-    if (runner->currentRoom == nullptr) return nullptr;
-    repeat(runner->currentRoom->layerCount, i) {
-        if ((int32_t) runner->currentRoom->layers[i].id == id) return &runner->currentRoom->layers[i];
+RoomLayer* Runner_findRoomLayerById(Room* room, int32_t id) {
+    requireNotNull(room);
+    repeat(room->layerCount, i) {
+        if ((int32_t) room->layers[i].id == id) return &room->layers[i];
     }
     return nullptr;
 }
@@ -2109,6 +2165,34 @@ RuntimeLayerElement* Runner_findLayerElementById(Runner* runner, int32_t element
 
 uint32_t Runner_getNextLayerId(Runner* runner) {
     return runner->nextLayerId++;
+}
+
+void Runner_addInstanceLayerElement(Runner* runner, int32_t layerId, int32_t instanceId) {
+    RuntimeLayer* runtimeLayer = Runner_findRuntimeLayerById(runner, layerId);
+    if (runtimeLayer == nullptr) return;
+    RuntimeLayerElement el = {0};
+    el.id = Runner_getNextLayerId(runner);
+    el.type = RuntimeLayerElementType_Instance;
+    el.visible = true;
+    el.alpha = 1.0f;
+    el.blend = 0xFFFFFF;
+    el.instanceId = instanceId;
+    arrput(runtimeLayer->elements, el);
+}
+
+void Runner_removeInstanceLayerElement(Runner* runner, int32_t instanceId) {
+    size_t layerCount = arrlenu(runner->runtimeLayers);
+    repeat(layerCount, i) {
+        RuntimeLayer* runtimeLayer = &runner->runtimeLayers[i];
+        size_t elementCount = arrlenu(runtimeLayer->elements);
+        repeat(elementCount, j) {
+            RuntimeLayerElement* el = &runtimeLayer->elements[j];
+            if (el->type == RuntimeLayerElementType_Instance && el->instanceId == instanceId) {
+                arrdel(runtimeLayer->elements, j);
+                return;
+            }
+        }
+    }
 }
 
 // Reaps GML structs whose only remaining ref is the structInstances registry's implicit +1.
@@ -2149,6 +2233,7 @@ void Runner_cleanupDestroyedInstances(Runner* runner) {
         } else {
             Runner_removeInstanceFromObjectLists(runner, inst);
             SpatialGrid_markInstanceAsDirty(runner->spatialGrid, inst);
+            Runner_removeInstanceLayerElement(runner, inst->instanceId);
             hmdel(runner->instancesById, inst->instanceId);
             Instance_free(inst);
             // Cached drawables hold raw Instance* that we just freed; force a rebuild before the next draw.
