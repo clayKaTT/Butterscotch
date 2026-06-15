@@ -12378,6 +12378,14 @@ static RValue builtin_layer_background_sprite(VMContext* ctx, RValue* args, MAYB
     return RValue_makeUndefined();
 }
 
+static RValue builtin_layer_background_index(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
+    Runner* runner = ctx->runner;
+    int32_t id = RValue_toInt32(args[0]);
+    int32_t index = RValue_toInt32(args[1]);
+    setBackgroundLayerField(id, index, imageIndex);
+    return RValue_makeUndefined();
+}
+
 static RValue builtin_layer_background_get_id(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
     Runner* runner = ctx->runner;
     int32_t layerId = resolveLayerIdArg(runner, args[0]);
@@ -12393,20 +12401,6 @@ static RValue builtin_layer_background_get_id(VMContext* ctx, RValue* args, MAYB
     }
 
     return RValue_makeReal(-1.0);
-}
-
-static RValue builtin_layer_background_index(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
-    Runner* runner = ctx->runner;
-    int32_t background_element_id = RValue_toInt32(args[0]);
-    int32_t index = RValue_toInt32(args[1]);
-
-    RuntimeBackgroundElement* bg = findBackgroundElement(runner, background_element_id);
-    if (bg != nullptr)
-        bg->imageIndex = index;
-    RoomLayerBackgroundData* parsed = findParsedBackgroundData(runner, background_element_id);
-    if (parsed != nullptr)
-        parsed->imageIndex = index;
-    return RValue_makeUndefined();
 }
 
 static RValue builtin_layer_tile_alpha(VMContext* ctx, RValue* args, MAYBE_UNUSED int32_t argCount) {
