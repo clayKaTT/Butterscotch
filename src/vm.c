@@ -1032,13 +1032,21 @@ static void resolveVariableWrite(VMContext* ctx, int32_t instanceType, uint32_t 
         } else {
             fprintf(stderr, "VM: [%s] INSTANCE_ARG write on unknown variable '%s' (builtinVarId=%d)\n", ctx->currentCodeName, varDef->name, bid);
         }
-        if (writeIndex >= 0 && GML_MAX_ARGUMENTS > writeIndex && ctx->scriptArgs != nullptr) {
+        if (writeIndex >= 0) {
             RValue independent = RValue_makeIndependent(val);
-            RValue_free(&ctx->scriptArgs[writeIndex]);
-            ctx->scriptArgs[writeIndex] = independent;
+            // You CAN write to the builtin argumentX variables even though the function does not "have" it as a function argument
+            // So we'll need to check if we need to resize the scriptArgs manually...
             if (writeIndex >= ctx->scriptArgCount) {
+                RValue* newScriptArgs = safeCalloc(writeIndex + 1, sizeof(RValue));
+                if (ctx->scriptArgCount > 0) {
+                    memcpy(newScriptArgs, ctx->scriptArgs, ctx->scriptArgCount * sizeof(RValue));
+                    free(ctx->scriptArgs);
+                }
+                ctx->scriptArgs = newScriptArgs;
                 ctx->scriptArgCount = writeIndex + 1;
             }
+            RValue_free(&ctx->scriptArgs[writeIndex]); // no-op if we are writing to a resized array that was (originally) out of bounds
+            ctx->scriptArgs[writeIndex] = independent;
         }
         RValue_free(&val);
         return;
@@ -2004,11 +2012,9 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
     require(ctx->dataWin->func.functionCount > funcIndex);
 
     // Pop arguments from stack (args pushed right-to-left, so first arg is on top)
-    // Use stack-allocated buffer for small arg counts (GMS 1.4 supports up to 16 arguments)
-    RValue stackArgs[GML_MAX_ARGUMENTS];
     RValue* args = nullptr;
     if (argCount > 0) {
-        args = (GML_MAX_ARGUMENTS >= argCount) ? stackArgs : safeMalloc(argCount * sizeof(RValue));
+        args = safeCalloc(argCount, sizeof(RValue));
         repeat(argCount, i) {
             args[i] = stackPop(ctx);
         }
@@ -2051,7 +2057,7 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
             repeat(argCount, i) {
                 RValue_free(&args[i]);
             }
-            if (args != stackArgs) free(args);
+            free(args);
         }
 
 #ifdef ENABLE_VM_TRACING
@@ -2085,7 +2091,7 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
             repeat(argCount, i) {
                 RValue_free(&args[i]);
             }
-            if (args != stackArgs) free(args);
+            free(args);
         }
 
         stackPushTyped(ctx, result, GML_TYPE_VARIABLE);
@@ -2113,7 +2119,7 @@ static void handleCall(VMContext* ctx, uint32_t instr, const uint8_t* extraData)
         repeat(argCount, i) {
             RValue_free(&args[i]);
         }
-        if (args != stackArgs) free(args);
+        free(args);
     }
 
 #ifdef ENABLE_VM_TRACING
@@ -2135,10 +2141,9 @@ static void handleCallV(VMContext* ctx, uint32_t instr) {
     RValue function = stackPop(ctx);
     RValue instance = stackPop(ctx);
 
-    RValue stackArgs[GML_MAX_ARGUMENTS];
     RValue* args = nullptr;
     if (argCount > 0) {
-        args = (GML_MAX_ARGUMENTS >= argCount) ? stackArgs : safeMalloc(argCount * sizeof(RValue));
+        args = safeCalloc(argCount, sizeof(RValue));
         repeat(argCount, i) {
             args[i] = stackPop(ctx);
         }
@@ -2209,7 +2214,7 @@ static void handleCallV(VMContext* ctx, uint32_t instr) {
         repeat(argCount, i) {
             RValue_free(&args[i]);
         }
-        if (args != stackArgs) free(args);
+        free(args);
     }
 
     stackPushTyped(ctx, result, GML_TYPE_VARIABLE);
@@ -3784,15 +3789,16 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     // Store arguments in scriptArgs (mirrors GMS 1.4's global argument stack).
     // Callee takes an INDEPENDENT reference for strings (strdup) and arrays (incRef) so
     // the caller's original args remain valid and owner-tracked by the caller.
-    RValue scriptArgs[GML_MAX_ARGUMENTS] = {0};
-    ctx->scriptArgs = scriptArgs;
-    ctx->scriptArgCount = argCount;
+    RValue* scriptArgs = nullptr;
     if (argCount > 0 && args != nullptr) {
+        scriptArgs = safeCalloc(argCount, sizeof(RValue));
         repeat(argCount, argIdx) {
             RValue argCopy = RValue_makeIndependent(args[argIdx]);
-            ctx->scriptArgs[argIdx] = argCopy;
+            scriptArgs[argIdx] = argCopy;
         }
     }
+    ctx->scriptArgs = scriptArgs;
+    ctx->scriptArgCount = argCount;
 
     ctx->savearefBalance = 0;
 
@@ -3828,6 +3834,8 @@ RValue VM_callCodeIndex(VMContext* ctx, int32_t codeIndex, RValue* args, int32_t
     repeat(ctx->scriptArgCount, i) {
         RValue_free(&ctx->scriptArgs[i]);
     }
+
+    free(ctx->scriptArgs);
 
     ctx->localVars = saved->savedLocals;
     ctx->localVarCount = saved->savedLocalsCount;
