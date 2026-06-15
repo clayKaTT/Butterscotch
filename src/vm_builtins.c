@@ -14891,6 +14891,7 @@ void VMBuiltins_registerAll(VMContext* ctx) {
 
     // Type functions
     VM_registerBuiltin(ctx, "real", builtin_real);
+    VM_registerBuiltin(ctx, "typeof", builtin_typeof);
     VM_registerBuiltin(ctx, "is_string", builtin_is_string);
     VM_registerBuiltin(ctx, "is_real", builtin_is_real);
     VM_registerBuiltin(ctx, "is_nan", builtin_is_nan);
@@ -14905,7 +14906,6 @@ void VMBuiltins_registerAll(VMContext* ctx) {
 #if IS_WAD17_OR_HIGHER_ENABLED
     VM_registerBuiltin(ctx, "is_method", builtin_is_method);
     VM_registerBuiltin(ctx, "is_callable", builtin_is_callable);
-    VM_registerBuiltin(ctx, "typeof", builtin_typeof);
 #endif
 
     // Math functions
