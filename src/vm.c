@@ -1409,7 +1409,6 @@ static void handlePop(VMContext* ctx, uint8_t type1, uint8_t type2, uint32_t var
                 if (INSTANCE_ID_BASE > instanceType) {
                     // Object reference: write to ALL instances of that object. The setter can run user code, so iterate a snapshot of the bucket.
                     Runner* runner = (Runner*) ctx->runner;
-                    Instance* savedInstance = (Instance*) ctx->currentInstance;
                     int32_t snapBase = Runner_pushInstancesOfObject(runner, instanceType);
                     int32_t snapEnd  = (int32_t) arrlen(runner->instanceSnapshots);
                     for (int32_t i = snapBase; snapEnd > i; i++) {
@@ -1423,7 +1422,6 @@ static void handlePop(VMContext* ctx, uint8_t type1, uint8_t type2, uint32_t var
 #endif
                     }
                     Runner_popInstanceSnapshot(runner, snapBase);
-                    ctx->currentInstance = savedInstance;
                 } else {
                     // Instance ID reference
                     Instance* target = findInstanceByTarget(ctx, instanceType);
