@@ -7596,11 +7596,11 @@ static RValue builtin_instance_create_layer(VMContext* ctx, RValue* args, int32_
                     }
 
                     variableInstanceSetOn(
-                      ctx,
-                      inst,
-                      requireNotNullMessage(name, "Trying to set a variable that we do not know the name of! Bug?"),
-                      target,
-                      "instance_create_layer"
+                        ctx,
+                        inst,
+                        requireNotNullMessage(name, "Trying to set a variable that we do not know the name of! Bug?"),
+                        target,
+                        "instance_create_layer"
                     );
                 }
             }
