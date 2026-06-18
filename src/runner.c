@@ -1174,8 +1174,10 @@ void Runner_drawViews(Runner* runner, int32_t gameW, int32_t gameH, bool debugSh
         runner->viewCurrent = 0;
         int32_t fullViewX = -(runner->widescreenExtraWidth / 2);
         int32_t fullViewY = -(runner->widescreenExtraHeight / 2);
-        int32_t fullViewW = gameW;
-        int32_t fullViewH = gameH;
+        // See GameMaker-HTML5's "DrawViews", in specific the !m_enableviews path
+        // When views aren't used, the room width/height is used
+        int32_t fullViewW = (int32_t) runner->currentRoom->width;
+        int32_t fullViewH = (int32_t) runner->currentRoom->height;
         applyFreeCamera(runner, &fullViewX, &fullViewY, &fullViewW, &fullViewH);
         renderer->vtable->beginView(renderer, fullViewX, fullViewY, fullViewW, fullViewH, 0, 0, gameW, gameH, 0.0f);
         Runner_draw(runner);
