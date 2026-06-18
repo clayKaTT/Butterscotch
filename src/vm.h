@@ -299,6 +299,7 @@ void VM_printOpcodeProfilerReport(const VMContext* ctx);
 void VM_registerBuiltin(VMContext* ctx, const char* name, BuiltinFunc func);
 BuiltinFunc VM_findBuiltin(VMContext* ctx, const char* name);
 
+RValue VM_structGetByVarId(Instance* structInst, int32_t varId, int32_t arrayIndex);
 RValue VM_structGet(VMContext* ctx, Instance* structInst, const char* name, int32_t arrayIndex);
 // Set a named field on a freshly-built GML struct.
 void VM_structSet(VMContext* ctx, Instance* structInst, const char* name, RValue val, int32_t arrayIndex);

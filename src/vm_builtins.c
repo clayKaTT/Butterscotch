@@ -1247,6 +1247,10 @@ void VMBuiltins_setVariable(VMContext* ctx, Instance* inst, int16_t builtinVarId
     Runner* runner = requireNotNullMessage(ctx->runner, "VM: setVariable called but no runner!");
     requireNotNull(runner);
 
+    if (inst->objectIndex == STRUCT_OBJECT_INDEX) {
+        fprintf(stderr, "Trying to set variable %s %s\n", name, RValue_toStringTyped(val));
+    }
+
     // Structs: instance builtins are ordinary members.
     if (inst != nullptr && inst->objectIndex == STRUCT_OBJECT_INDEX && isInstanceScopedBuiltinVar(builtinVarId)) {
         VM_structSet(ctx, inst, name, val, arrayIndex);
@@ -7574,6 +7578,34 @@ static RValue builtin_instance_create_layer(VMContext* ctx, RValue* args, int32_
 
     Instance* inst = Runner_createInstanceWithLayer(runner, x, y, objectIndex, layerId);
     if (inst == nullptr) return RValue_makeReal(INSTANCE_NOONE);
+
+    if (argCount >= 5) {
+        RValue varStruct = args[4];
+        if (varStruct.type == RVALUE_STRUCT) {
+            repeat(varStruct.structInst->selfVars.capacity, i) {
+                IntRValueEntry entryOnTheVarStruct = varStruct.structInst->selfVars.entries[i];
+                RValue target = VM_structGetByVarId(varStruct.structInst, entryOnTheVarStruct.key, -1);
+
+                if (entryOnTheVarStruct.key != INT_RVALUE_HASHMAP_EMPTY_KEY) {
+                    // We need to get the name of the VarId
+                    char* name = nullptr;
+                    repeat(shlen(ctx->selfVarNameMap), j) {
+                        if (ctx->selfVarNameMap[j].value == entryOnTheVarStruct.key) {
+                            name = ctx->selfVarNameMap[j].key;
+                        }
+                    }
+
+                    variableInstanceSetOn(
+                      ctx,
+                      inst,
+                      requireNotNullMessage(name, "Trying to set a variable that we do not know the name of! Bug?"),
+                      target,
+                      "instance_create_layer"
+                    );
+                }
+            }
+        }
+    }
 
     Instance* callerInst = ctx->currentInstance;
     if (callerInst != nullptr && ctx->creatorVarID >= 0) {

@@ -314,6 +314,18 @@ int32_t VM_getOrAllocateSelfVarID(VMContext* ctx, const char* name) {
     return id;
 }
 
+RValue VM_structGetByVarId(Instance* structInst, int32_t slotId, int32_t arrayIndex) {
+    requireMessageFormatted(__FILE__, __LINE__, structInst->objectIndex == STRUCT_OBJECT_INDEX, "Trying to use VM_structGetByVarId on a instance that isn't a struct! objectIndex=%d", structInst->objectIndex);
+    RValue* slot = IntRValueHashMap_findSlot(&structInst->selfVars, slotId);
+    if (slot != nullptr) {
+        if (arrayIndex >= 0) return GMLArray_getOnArrayRef(slot, arrayIndex);
+        RValue result = *slot;
+        result.ownsReference = false;
+        return result;
+    }
+    return RValue_makeUndefined();
+}
+
 // Plain member read on a struct.
 // Returns a weak view (or undefined when the member/element doesn't exist).
 RValue VM_structGet(VMContext* ctx, Instance* structInst, const char* name, int32_t arrayIndex) {
