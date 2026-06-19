@@ -233,10 +233,12 @@ struct VMContext {
     void* currentArrayOwner;
     // SAVEAREF/RESTOREAREF balance tracker.
     int32_t savearefBalance;
+#ifdef ENABLE_WAD17
     VMException* exception;
     VMException* parkedException;
     int32_t exceptionHandlerStackTop;
     ExceptionHandlerFrame exceptionHandlerFrameStack[VM_EXCEPTION_HANDLER_FRAME_STACK_SIZE];
+#endif
 
     // Cold: init-only or rare lookups
     BuiltinEntry* builtinMap;

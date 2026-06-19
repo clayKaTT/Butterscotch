@@ -2122,10 +2122,12 @@ static void handleCallV(VMContext* ctx, uint32_t instr) {
         result = RValue_makeUndefined();
     } else {
         fprintf(stderr, "VM: [%s] CALLV with unresolvable function reference (type=%d, codeIndex=%d)\n", ctx->currentCodeName, function.type, codeIndex);
+#ifdef ENABLE_WAD17
         VMException* exception = safeCalloc(1, sizeof(VMException));
         exception->message = safeStrdup("CALLV with unresolvable function reference");
         ctx->exception = exception;
         result = RValue_makeUndefined();
+#endif
     }
 
     ctx->currentInstance = savedSelf;
@@ -2780,8 +2782,14 @@ static RValue executeLoop(VMContext* ctx) {
 #ifdef ENABLE_VM_EXCEPTIONS_LOGS
             fprintf(stderr, "VM: Exception thrown! Stack Top is %d\n", ctx->exceptionHandlerStackTop);
 #endif
-            // TODO: Handle it gracefully
-            requireMessage(ctx->exceptionHandlerStackTop != 0, "Exception handled stack top is 0! This would've technically crashed the game in the original runner... or we aren't handling exceptions correctly");
+            if (ctx->exceptionHandlerStackTop == 0) {
+                // TODO: When Butterscotch is better, we could have a strict mode that DOES throw a error
+                fprintf(stderr, "VM: The exception handler frame stack is 0, but we have a pending exception to be dispatched! This would've technically crashed the game in the original runner... or we aren't handling exceptions correctly. We'll swallow the exception and hope for the best... (Exception: %s)\n", ctx->exception->message);
+                free(ctx->exception->message);
+                free(ctx->exception);
+                ctx->exception = nullptr;
+                return RValue_makeUndefined();
+            }
 
             // Restore caller frame
             ExceptionHandlerFrame* exceptionHandlerFrame = &ctx->exceptionHandlerFrameStack[ctx->exceptionHandlerStackTop - 1];
@@ -3623,6 +3631,15 @@ void VM_reset(VMContext* ctx) {
     // Create the instance used for "self" in GLOB scripts
     Instance_free(ctx->globalScopeInstance);
     ctx->globalScopeInstance = Instance_create(0, STRUCT_OBJECT_INDEX, 0, 0);
+
+#ifdef ENABLE_WAD17
+    if (ctx->parkedException != nullptr) {
+        free(ctx->parkedException->message);
+        free(ctx->parkedException);
+    }
+    free(ctx->exception->message);
+    free(ctx->exception);
+#endif
 
     fprintf(stderr, "VM: Reset complete\n");
 }
