@@ -364,19 +364,14 @@ int main(int argc, char* argv[]) {
         runner->deltaTime = (frameStartTime - lastFrameStartTime) * 1000000.0;
         lastFrameStartTime = frameStartTime;
 
-        double stepTime = 0.0;
-        double audioTime = 0.0;
         if (shouldStep) {
             // Run one game step (Begin Step, Keyboard, Alarms, Step, End Step, room transitions)
-            double stepStart = PS3_GET_TIME;
             Runner_step(runner);
-            stepTime = PS3_GET_TIME - stepStart;
 
             // Update audio system (gain fading, cleanup ended sounds)
             float dt = (float) (runner->deltaTime / 1000000.0);
             if (0.0f > dt) dt = 0.0f;
             if (dt > 0.1f) dt = 0.1f; // cap delta to avoid huge fades on lag spikes
-            double audioStart = PS3_GET_TIME;
             runner->audioSystem->vtable->update(runner->audioSystem, dt);
         }
 
@@ -393,13 +388,11 @@ int main(int argc, char* argv[]) {
 
         Runner_beginFrame(runner, gameW, gameH, fbWidth, fbHeight, fbWidth, fbHeight);
 
-        double drawStart = PS3_GET_TIME;
         Runner_drawViews(runner, gameW, gameH, debugShowCollisionMasks);
         renderer->vtable->endFrameInit(renderer);
         Runner_drawPost(runner, fbWidth, fbHeight);
         renderer->vtable->endFrameEnd(renderer);
         Runner_drawGUI(runner, fbWidth, fbHeight, gameW, gameH);
-        double drawTime = PS3_GET_TIME - drawStart;
 		
         sysUtilCheckCallback();
         // Only swap when there isn't a room change to match the original runner.
