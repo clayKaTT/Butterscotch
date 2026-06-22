@@ -6,8 +6,8 @@ on:
   pull_request:
     branches: [main]
 
-jobs: 
-  build-ps3:
+jobs:
+    build-ps3:
     name: Build (PS3)
     runs-on: ubuntu-latest
     container: scummvm/dockerized-toolchains:ps3
