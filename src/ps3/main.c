@@ -77,7 +77,7 @@ const StickMapping STICK_MAPPINGS[] = {
 #define STICK_MAPPING_COUNT (sizeof(STICK_MAPPINGS) / sizeof(STICK_MAPPINGS[0]))
 static bool prevStickState[sizeof(STICK_MAPPINGS) / sizeof(STICK_MAPPINGS[0])] = {0};
 
-#define dataWinPath "/dev_hdd0/BUTTERSCOTCH/data.win"
+#define DATAWIN_PATH "/dev_hdd0/BUTTERSCOTCH/data.win"
 static const char* dataWinPath = DATAWIN_PATH;
 
 // ===[ MAIN ]===
