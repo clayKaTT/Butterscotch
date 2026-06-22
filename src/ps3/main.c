@@ -77,6 +77,9 @@ const StickMapping STICK_MAPPINGS[] = {
 #define STICK_MAPPING_COUNT (sizeof(STICK_MAPPINGS) / sizeof(STICK_MAPPINGS[0]))
 static bool prevStickState[sizeof(STICK_MAPPINGS) / sizeof(STICK_MAPPINGS[0])] = {0};
 
+#define dataWinPath "/dev_hdd0/BUTTERSCOTCH/data.win"
+static const char* dataWinPath = DATAWIN_PATH;
+
 // ===[ MAIN ]===
 static double freq = 0; 
 #define PS3_GET_TIME ((double)__builtin_ppc_get_timebase() / (double)freq)
@@ -152,21 +155,6 @@ char *str_replace(char *orig, char *rep, char *with) {
 
 static char buffer[9999];
 int main(int argc, char* argv[]) {
-    printf("%s\n", argv[0]);
-    strcpy(buffer, argv[0]);
-    char* tmp = str_replace(buffer, "butterscotch.elf", "");
-	char* tmp2 = str_replace(tmp, "butterscotch.self", "");
-    char* tmp3 = str_replace(tmp2, "EBOOT.BIN", "");
-    char* dataWinPath = malloc(strlen(tmp3) + strlen("data.win") + 1);
-    if (!dataWinPath) {
-        free(tmp3);
-        return 1;
-    }
-    strcpy(dataWinPath, tmp3);
-    strcat(dataWinPath, "data.win");
-    free(tmp);
-    free(tmp2);
-	free(tmp3);
     sysUtilRegisterCallback(SYSUTIL_EVENT_SLOT0, sys_callback, NULL);
     freq = sysGetTimebaseFrequency();
 
