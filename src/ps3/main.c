@@ -12,7 +12,6 @@
 #include "runner_keyboard.h"
 #include "runner.h"
 #include "input_recording.h"
-#include "debug_overlay.h"
 #include "gl_legacy_renderer.h"
 #include "overlay_file_system.h"
 #include "ps3_overlay.h"
@@ -408,11 +407,7 @@ int main(int argc, char* argv[]) {
         renderer->vtable->endFrameEnd(renderer);
         Runner_drawGUI(runner, fbWidth, fbHeight, gameW, gameH);
         double drawTime = PS3_GET_TIME - drawStart;
-
-        // ===[ Debug Overlay ]===
-        double tickTime = PS3_GET_TIME - frameStartTime;
-        PS3Overlay_drawDebugOverlay(runner, (float) (tickTime * 1000.0), (float) (stepTime * 1000.0), (float) (drawTime * 1000.0), (float) (audioTime * 1000.0), fbWidth, fbHeight);
-
+		
         sysUtilCheckCallback();
         // Only swap when there isn't a room change to match the original runner.
         if (runner->pendingRoom == -1) {
