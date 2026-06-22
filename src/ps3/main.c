@@ -14,7 +14,6 @@
 #include "input_recording.h"
 #include "gl_legacy_renderer.h"
 #include "overlay_file_system.h"
-#include "ps3_overlay.h"
 #include "ps3_textures.h"
 #ifdef USE_OPENAL
 #include "al_audio_system.h"
@@ -269,7 +268,6 @@ int main(int argc, char* argv[]) {
     AudioSystem* audioSystem = (AudioSystem*) NoopAudioSystem_create();
 #endif
 
-    PS3Overlay_init();
 
     // Initialize the paletted shader
     // The palette must ALWAYS be in TEXUNIT1!
@@ -362,10 +360,6 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        if (RunnerKeyboard_checkPressed(runner->keyboard, VK_F12)) {
-            PS3Overlay_toggleDebugOverlay(runner);
-        }
-
         double frameStartTime = PS3_GET_TIME;
         runner->deltaTime = (frameStartTime - lastFrameStartTime) * 1000000.0;
         lastFrameStartTime = frameStartTime;
@@ -384,7 +378,6 @@ int main(int argc, char* argv[]) {
             if (dt > 0.1f) dt = 0.1f; // cap delta to avoid huge fades on lag spikes
             double audioStart = PS3_GET_TIME;
             runner->audioSystem->vtable->update(runner->audioSystem, dt);
-            audioTime = PS3_GET_TIME - audioStart;
         }
 
         // Query actual framebuffer size (differs from window size on Wayland with fractional scaling)
@@ -429,7 +422,6 @@ int main(int argc, char* argv[]) {
 
 
     // Cleanup
-    PS3Overlay_deinit();
     runner->audioSystem->vtable->destroy(runner->audioSystem);
     runner->audioSystem = nullptr;
     renderer->vtable->destroy(renderer);
